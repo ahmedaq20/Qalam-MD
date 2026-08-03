@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MD Viewer
+Comment=Markdown viewer/editor with RTL (Arabic) support
+Exec=/home/ahmedalaa/Desktop/md-viewer/run.sh %f
+Icon=accessories-text-editor
+Terminal=false
+Categories=Utility;TextEditor;
+MimeType=text/markdown;text/plain;
