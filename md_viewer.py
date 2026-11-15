@@ -23,7 +23,9 @@ from PySide6.QtGui import (
     QAction,
     QColor,
     QFont,
+    QFontDatabase,
     QIcon,
+    QPainter,
     QPageLayout,
     QPageSize,
     QKeySequence,
@@ -61,7 +63,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <style>
-  body {{ font-family: 'Noto Sans','Noto Naskh Arabic','DejaVu Sans',sans-serif;
+  body {{ font-family: 'Cairo','Noto Sans','Noto Naskh Arabic','DejaVu Sans',sans-serif;
          font-size: 16px; line-height: 1.7; margin: 24px;
          color: {text}; background-color: {page_bg}; }}
   a {{ color: {link}; }}
@@ -85,7 +87,7 @@ PDF_HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <style>
-  body {{ font-family: 'Noto Sans','Noto Naskh Arabic','DejaVu Sans',sans-serif;
+  body {{ font-family: 'Cairo','Noto Sans','Noto Naskh Arabic','DejaVu Sans',sans-serif;
          font-size: 11pt; line-height: 1.45; margin: 0;
          color: #1a1a1a; background-color: #ffffff; }}
   h1 {{ font-size: 22pt; margin: 0 0 14pt; padding-bottom: 5pt;
@@ -121,11 +123,11 @@ THEMES = {
         "pygments": "friendly",
     },
     "Dark": {
-        "page_bg": "#1e1e2e", "text": "#e8e8e8", "link": "#89b4fa",
-        "code_fg": "#f38ba8", "code_bg": "#313244", "pre_bg": "#313244",
-        "quote_fg": "#a6adc8", "th_bg": "#313244", "heading_border": "#45475a",
-        "editor_bg": "#1e1e2e", "editor_fg": "#e8e8e8",
-        "highlight": "#89b4fa", "highlighted_text": "#1e1e2e",
+        "page_bg": "#17231f", "text": "#edf5ef", "link": "#8ccaff",
+        "code_fg": "#f1c985", "code_bg": "#263b31", "pre_bg": "#263b31",
+        "quote_fg": "#b6cbbf", "th_bg": "#2b4437", "heading_border": "#496254",
+        "editor_bg": "#17231f", "editor_fg": "#edf5ef",
+        "highlight": "#9ce0bf", "highlighted_text": "#10251b",
         "pygments": "monokai",
     },
     "Sepia": {
@@ -177,6 +179,11 @@ class ThemeComboBox(QComboBox):
 class MainWindow(QMainWindow, WritingTools):
     def __init__(self, draft_dir=None) -> None:
         super().__init__()
+        if not getattr(QApplication.instance(), '_qalam_font_loaded', False):
+            font_id = QFontDatabase.addApplicationFont(str(Path(__file__).resolve().parent / 'assets/fonts/Cairo.ttf'))
+            if font_id >= 0:
+                QApplication.instance()._qalam_font_loaded = True
+                QApplication.instance().setFont(QFont('Cairo', 10))
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setWindowIcon(QIcon(str(Path(__file__).parent / "assets/qalam-icon.png")))
         self.current_path: Path | None = None
@@ -188,8 +195,7 @@ class MainWindow(QMainWindow, WritingTools):
         self.viewer.setOpenExternalLinks(True)
 
         self.editor = QPlainTextEdit()
-        font = QFont("Noto Sans Mono")
-        font.setStyleHint(QFont.StyleHint.Monospace)
+        font = QFont("Cairo")
         font.setPointSize(12)
         self.editor.setFont(font)
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
@@ -475,7 +481,7 @@ class MainWindow(QMainWindow, WritingTools):
         )
 
         doc = QTextDocument()
-        doc.setDefaultFont(QFont("Noto Sans", 11))
+        doc.setDefaultFont(QFont("Cairo", 11))
         if self.current_path is not None and hasattr(doc, "setBaseUrl"):
             doc.setBaseUrl(QUrl.fromLocalFile(str(self.current_path.parent) + "/"))
         doc.setHtml(
@@ -553,22 +559,43 @@ class MainWindow(QMainWindow, WritingTools):
         theme = THEMES[name]
         dark = name == "Dark"
         arrow_icon = (Path(__file__).resolve().parent / "assets" / ("chevron-down-light.svg" if dark else "chevron-down.svg")).as_posix()
-        bg = "#151f24" if dark else ("#f4ecd8" if name == "Sepia" else "#f4f7f5")
-        surface = "#223039" if dark else ("#fff8e8" if name == "Sepia" else "#ffffff")
-        fg = "#e8eeeb" if dark else "#193c32"
-        border = "#3b514a" if dark else "#d9e3dd"
+        bg = "#101a16" if dark else ("#f4ecd8" if name == "Sepia" else "#f4f7f5")
+        surface = "#21332a" if dark else ("#fff8e8" if name == "Sepia" else "#ffffff")
+        fg = "#edf5ef" if dark else "#193c32"
+        border = "#496254" if dark else "#d9e3dd"
+        palette = QPalette(self.style().standardPalette())
+        for role, color in (
+            (QPalette.ColorRole.Window, bg), (QPalette.ColorRole.WindowText, fg),
+            (QPalette.ColorRole.Base, theme['editor_bg']), (QPalette.ColorRole.Text, fg),
+            (QPalette.ColorRole.Button, surface), (QPalette.ColorRole.ButtonText, fg),
+            (QPalette.ColorRole.Highlight, theme['highlight']),
+            (QPalette.ColorRole.HighlightedText, theme['highlighted_text']),
+            (QPalette.ColorRole.PlaceholderText, '#a5bbae' if dark else '#62796e'),
+        ):
+            palette.setColor(role, QColor(color))
+        self.setPalette(palette)
         self.setStyleSheet(f"""
             QMainWindow, QMenuBar, QStatusBar {{ background: {bg}; color: {fg}; }}
             QDialog {{ background: {bg}; color: {fg}; }}
+            QSpinBox {{ background: {surface}; color: {fg}; border: 1px solid {border}; padding: 6px; border-radius: 6px; }}
             QLineEdit {{ background: {surface}; color: {fg}; border: 1px solid {border}; padding: 8px; selection-background-color: {theme['highlight']}; selection-color: {theme['highlighted_text']}; }}
             QCheckBox {{ color: {fg}; }}
             QPushButton {{ background: {surface}; color: {fg}; border: 1px solid {border}; padding: 8px; border-radius: 5px; }}
             QPushButton:hover {{ border-color: #b79a55; }}
-            QWidget {{ font-family: 'Noto Sans Arabic', 'Noto Sans'; font-size: 13px; }}
+            QWidget {{ font-family: 'Cairo', 'Noto Sans Arabic', 'Noto Sans'; font-size: 13px; }}
             QLabel {{ color: {fg}; background: transparent; }}
             QToolBar {{ background: {surface}; border: 1px solid {border}; padding: 10px; spacing: 5px; }}
             QToolButton {{ color: {fg}; padding: 9px; border-radius: 7px; }}
-            QToolButton:hover, QToolButton:checked {{ background: {border}; }}
+            QToolButton:hover {{ background: {border}; }}
+            QToolButton:checked {{ background: #28664d; color: #ffffff; border: 1px solid #75b99a; }}
+            QToolButton:focus {{ border: 1px solid #b79a55; }}
+            QMenuBar::item:selected {{ background: {surface}; }}
+            QToolTip {{ background: {surface}; color: {fg}; border: 1px solid {border}; padding: 6px; }}
+            QScrollBar:vertical {{ background: {bg}; width: 12px; margin: 0; }}
+            QScrollBar:horizontal {{ background: {bg}; height: 12px; margin: 0; }}
+            QScrollBar::handle {{ background: {border}; border-radius: 5px; min-height: 24px; min-width: 24px; }}
+            QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+            QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
             QComboBox {{ background: {surface}; color: {fg}; padding: 7px; border: 1px solid {border}; border-radius: 6px; }}
             QComboBox#themeSelector {{ padding: 9px 14px 9px 32px; border-radius: 10px; min-height: 22px; }}
             QComboBox#themeSelector:hover, QComboBox#themeSelector:focus {{ border: 1px solid #b79a55; }}
@@ -596,6 +623,23 @@ class MainWindow(QMainWindow, WritingTools):
             QPushButton#welcomeCard:focus {{ border: 2px solid #b79a55; }}
             QStatusBar {{ padding: 6px; border-top: 1px solid {border}; }}
         """)
+        # Native icon themes may provide black icons even with a dark stylesheet.
+        for control in self.findChildren(QAction) + self.findChildren(QPushButton):
+            original = control.property('qalamOriginalIcon')
+            if original is None:
+                original = control.icon()
+                control.setProperty('qalamOriginalIcon', original)
+            if original.isNull():
+                continue
+            if dark:
+                pixmap = original.pixmap(32, 32)
+                painter = QPainter(pixmap)
+                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                painter.fillRect(pixmap.rect(), QColor('#d7eadf'))
+                painter.end()
+                control.setIcon(QIcon(pixmap))
+            else:
+                control.setIcon(original)
         for widget, bg, fg in (
             (self.viewer, theme["page_bg"], theme["text"]),
             (self.live_view, theme["page_bg"], theme["text"]),
