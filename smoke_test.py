@@ -103,6 +103,18 @@ for name, theme in THEMES.items():
     assert theme["page_bg"] in w.viewer.toHtml().lower(), f"{name} bg not in preview"
     assert re.search(r"color:\s*#", w.viewer.toHtml()), f"{name}: no code colors"
 w.apply_theme("Light")
-assert w.theme_combo.currentText() == "Light"
+assert w.theme_combo.currentText() == "فاتح"
 
 print("SMOKE TEST: all checks passed ✔")
+
+# Welcome actions and debounced live preview.
+from PySide6.QtTest import QTest
+fresh = MainWindow()
+assert fresh.stack.currentWidget() is fresh.welcome
+fresh.new_file()
+assert fresh.rtl and fresh.stack.currentWidget() is fresh.editor
+fresh.editor.setPlainText('# معاينة حية\n\nنص جديد')
+QTest.qWait(350)
+assert 'معاينة حية' in fresh.live_view.toPlainText()
+assert '5 كلمة' in fresh.status_label.text()
+print('Arabic welcome and live preview checks passed')

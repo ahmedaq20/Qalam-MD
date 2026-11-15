@@ -1,9 +1,12 @@
+#!/usr/bin/env xdg-open
 [Desktop Entry]
 Type=Application
-Name=MD Viewer
+Name=قلم
+Name[ar]=قلم
+GenericName=محرر Markdown
 Comment=Markdown viewer/editor with RTL (Arabic) support
 Exec=/home/ahmedalaa/Desktop/md-viewer/run.sh %f
-Icon=accessories-text-editor
+Icon=/home/ahmedalaa/Desktop/md-viewer/assets/qalam-icon.png
 Terminal=false
 Categories=Utility;TextEditor;
 MimeType=text/markdown;text/plain;

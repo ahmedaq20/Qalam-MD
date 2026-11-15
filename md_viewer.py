@@ -16,11 +16,12 @@ from pathlib import Path
 
 import markdown
 from markdown.extensions.codehilite import CodeHiliteExtension
-from PySide6.QtCore import QMarginsF, QSettings, Qt, QUrl
+from PySide6.QtCore import QMarginsF, QSettings, QSize, QTimer, Qt, QUrl
 from PySide6.QtGui import (
     QAction,
     QColor,
     QFont,
+    QIcon,
     QPageLayout,
     QPageSize,
     QKeySequence,
@@ -32,6 +33,11 @@ from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDockWidget,
+    QHBoxLayout,
+    QVBoxLayout,
+    QPushButton,
+    QWidget,
     QFileDialog,
     QLabel,
     QMainWindow,
@@ -42,7 +48,7 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
-APP_NAME = "MD Viewer"
+APP_NAME = "قلم"
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html dir="{direction}">
@@ -151,6 +157,8 @@ def looks_arabic(text: str) -> bool:
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setWindowIcon(QIcon(str(Path(__file__).parent / "assets/qalam-icon.png")))
         self.current_path: Path | None = None
         self.rtl = False
         self.theme_name = "Light"
@@ -176,13 +184,17 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stack)
 
         # ---------------- actions / toolbar ----------------
-        tb = QToolBar("Main")
+        tb = QToolBar("أدوات المستند")
+        tb.setIconSize(QSize(22, 22))
         tb.setMovable(False)
         self.addToolBar(tb)
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
 
         def add(text, shortcut, slot, checkable=False):
             action = QAction(text, self)
+            icons = {"فتح": "document-open", "جديد": "document-new", "حفظ": "document-save", "حفظ باسم": "document-save-as", "تصدير PDF": "document-export", "تحرير": "document-edit", "اتجاه عربي": "format-text-direction-rtl"}
+            action.setIcon(QIcon.fromTheme(icons.get(text, "format-text-direction-ltr")))
+            action.setToolTip(f"{text} ({shortcut})")
             action.setShortcut(QKeySequence(shortcut))
             action.setCheckable(checkable)
             action.triggered.connect(slot)
@@ -190,22 +202,22 @@ class MainWindow(QMainWindow):
             self.addAction(action)  # shortcut works even if toolbar is hidden
             return action
 
-        add("Open…", "Ctrl+O", self.open_dialog)
-        add("New", "Ctrl+N", self.new_file)
-        add("Save", "Ctrl+S", self.save)
-        add("Save As…", "Ctrl+Shift+S", self.save_as)
-        add("Download PDF…", "Ctrl+P", self.export_pdf_dialog)
+        add("فتح", "Ctrl+O", self.open_dialog)
+        add("جديد", "Ctrl+N", self.new_file)
+        add("حفظ", "Ctrl+S", self.save)
+        add("حفظ باسم", "Ctrl+Shift+S", self.save_as)
+        add("تصدير PDF", "Ctrl+P", self.export_pdf_dialog)
         tb.addSeparator()
-        self.edit_action = add("✏ Edit", "Ctrl+E", self.toggle_mode, checkable=True)
-        self.dir_action = add("⇄ RTL", "Ctrl+R", self.toggle_direction, checkable=True)
+        self.edit_action = add("تحرير", "Ctrl+E", self.toggle_mode, checkable=True)
+        self.dir_action = add("اتجاه عربي", "Ctrl+R", self.toggle_direction, checkable=True)
         tb.addSeparator()
         add(
-            "Sel RTL",
+            "تحديد عربي",
             "Ctrl+Shift+R",
             lambda _c=False: self.set_selection_direction(True),
         )
         add(
-            "Sel LTR",
+            "تحديد لاتيني",
             "Ctrl+Shift+L",
             lambda _c=False: self.set_selection_direction(False),
         )
@@ -215,9 +227,9 @@ class MainWindow(QMainWindow):
         self.editor.customContextMenuRequested.connect(self._editor_menu)
 
         tb.addSeparator()
-        tb.addWidget(QLabel(" Theme: "))
+        tb.addWidget(QLabel("  المظهر  "))
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(list(THEMES))
+        self.theme_combo.addItems(["فاتح", "داكن", "ورقي"])
         tb.addWidget(self.theme_combo)
 
         self.status_label = QLabel()
@@ -225,7 +237,33 @@ class MainWindow(QMainWindow):
 
         self.editor.document().modificationChanged.connect(self.refresh_title)
 
-        self.resize(1000, 700)
+        self.preview_dock = QDockWidget("المعاينة المباشرة", self)
+        self.preview_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        self.live_view = QTextBrowser()
+        self.live_view.setMinimumWidth(280)
+        self.live_view.setOpenExternalLinks(True)
+        self.live_view.setDocument(self.viewer.document())
+        self.preview_dock.setWidget(self.live_view)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.preview_dock)
+        self.preview_dock.hide()
+        view_menu = self.menuBar().addMenu("عرض")
+        live_action = self.preview_dock.toggleViewAction()
+        live_action.setText("المعاينة المباشرة")
+        live_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
+        view_menu.addAction(live_action)
+        file_menu = self.menuBar().addMenu("ملف")
+        for action in tb.actions()[:5]:
+            file_menu.addAction(action)
+        self.render_timer = QTimer(self)
+        self.render_timer.setSingleShot(True)
+        self.render_timer.setInterval(220)
+        self.render_timer.timeout.connect(self.render)
+        self.editor.textChanged.connect(lambda: self.render_timer.start())
+        self.editor.textChanged.connect(self.update_status)
+        self.welcome = self.build_welcome()
+        self.stack.addWidget(self.welcome)
+        self.resize(1180, 780)
+        self.setMinimumSize(780, 560)
         self.set_direction(False)
         self.toggle_mode(False)
         self.refresh_title()
@@ -234,9 +272,57 @@ class MainWindow(QMainWindow):
         saved = QSettings("md-viewer", "md-viewer").value("theme", "Light")
         if saved not in THEMES:
             saved = "Light"
-        self.theme_combo.setCurrentText(saved)
-        self.theme_combo.currentTextChanged.connect(self.apply_theme)
+        self.theme_combo.setCurrentIndex(list(THEMES).index(saved))
+        self.theme_combo.currentIndexChanged.connect(lambda index: self.apply_theme(list(THEMES)[index]))
         self.apply_theme(saved)
+        self.stack.setCurrentWidget(self.welcome)
+        self.update_status()
+
+    def build_welcome(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(48, 32, 48, 40)
+        layout.addStretch()
+        logo = QLabel()
+        logo.setPixmap(self.windowIcon().pixmap(112, 112))
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(logo)
+        title = QLabel("أفكارك تبدأ بقلم")
+        title.setObjectName("welcomeTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        subtitle = QLabel("مساحة هادئة للكتابة بالعربية، وتحرير ملفات Markdown ومعاينتها.")
+        subtitle.setObjectName("subtitle")
+        subtitle.setWordWrap(True)
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(subtitle)
+        layout.addSpacing(28)
+        cards = QHBoxLayout()
+        for text, hint, icon, callback in [
+            ("مستند جديد", "Ctrl + N", "document-new", self.new_file),
+            ("فتح مستند", "Ctrl + O", "document-open", self.open_dialog),
+            ("جرّب قلم", "مثال عربي جاهز", "help-about", self.open_example),
+        ]:
+            button = QPushButton(f"{text}\n{hint}")
+            button.setObjectName("welcomeCard")
+            button.setIcon(QIcon.fromTheme(icon))
+            button.setIconSize(QSize(28, 28))
+            button.setMinimumHeight(108)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(callback)
+            cards.addWidget(button)
+        layout.addLayout(cards)
+        layout.addSpacing(24)
+        hint = QLabel("كتابة عربية  •  معاينة مباشرة  •  تصدير PDF")
+        hint.setObjectName("subtitle")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(hint)
+        layout.addStretch()
+        return page
+
+    def open_example(self):
+        if self.maybe_save():
+            self.open_path(Path(__file__).parent / "example-ar.md")
 
     # ---------------- file operations ----------------
 
@@ -245,7 +331,7 @@ class MainWindow(QMainWindow):
             return
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open Markdown file",
+            "فتح مستند Markdown",
             "",
             "Markdown files (*.md *.markdown *.mdown *.txt);;All files (*)",
         )
@@ -256,7 +342,7 @@ class MainWindow(QMainWindow):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            QMessageBox.critical(self, APP_NAME, f"Could not open file:\n{exc}")
+            QMessageBox.critical(self, APP_NAME, f"تعذّر فتح الملف:\n{exc}")
             return
         self.current_path = path
         self.editor.setPlainText(text)
@@ -265,7 +351,7 @@ class MainWindow(QMainWindow):
         self.set_direction(looks_arabic(text))
         self.toggle_mode(False)
         self.refresh_title()
-        self.statusBar().showMessage(f"Opened: {path}", 3000)
+        self.statusBar().showMessage(f"تم فتح: {path}", 3000)
 
     def new_file(self, *_):
         if not self.maybe_save():
@@ -273,6 +359,7 @@ class MainWindow(QMainWindow):
         self.current_path = None
         self.editor.clear()
         self.editor.document().setModified(False)
+        self.set_direction(True)
         self.toggle_mode(True)  # go straight to editing
         self.refresh_title()
 
@@ -283,7 +370,7 @@ class MainWindow(QMainWindow):
 
     def save_as(self, *_):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Markdown file", "", "Markdown files (*.md);;All files (*)"
+            self, "حفظ المستند", "", "Markdown files (*.md);;All files (*)"
         )
         if not path:
             return
@@ -296,17 +383,17 @@ class MainWindow(QMainWindow):
         try:
             path.write_text(self.editor.toPlainText(), encoding="utf-8")
         except OSError as exc:
-            QMessageBox.critical(self, APP_NAME, f"Could not save file:\n{exc}")
+            QMessageBox.critical(self, APP_NAME, f"تعذّر حفظ الملف:\n{exc}")
             return
         self.editor.document().setModified(False)
         self.refresh_title()
-        self.statusBar().showMessage(f"Saved: {path}", 3000)
+        self.statusBar().showMessage(f"تم حفظ: {path}", 3000)
 
     def export_pdf_dialog(self, *_):
         default_path = self._default_pdf_path()
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Download PDF",
+            "تصدير PDF",
             str(default_path),
             "PDF files (*.pdf);;All files (*)",
         )
@@ -345,9 +432,9 @@ class MainWindow(QMainWindow):
         doc.setPageSize(printer.pageRect(QPrinter.Unit.Point).size())
         doc.print_(printer)
         if not path.is_file():
-            QMessageBox.critical(self, APP_NAME, "Could not create PDF file.")
+            QMessageBox.critical(self, APP_NAME, "تعذّر إنشاء ملف PDF.")
             return
-        self.statusBar().showMessage(f"Downloaded PDF: {path}", 3000)
+        self.statusBar().showMessage(f"تم تصدير PDF: {path}", 3000)
 
     def maybe_save(self) -> bool:
         if not self.editor.document().isModified():
@@ -355,7 +442,7 @@ class MainWindow(QMainWindow):
         ret = QMessageBox.warning(
             self,
             APP_NAME,
-            "The document has unsaved changes.\nDo you want to save them?",
+            "يوجد تعديل لم يتم حفظه.\nهل تريد حفظ التغييرات؟",
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
@@ -376,6 +463,9 @@ class MainWindow(QMainWindow):
         else:
             self.render()
             self.stack.setCurrentWidget(self.viewer)
+        self.preview_dock.setVisible(edit)
+        if edit:
+            self.resizeDocks([self.preview_dock], [self.width() // 2], Qt.Orientation.Horizontal)
         self.edit_action.setChecked(edit)
         self.update_status()
 
@@ -404,8 +494,40 @@ class MainWindow(QMainWindow):
             name = "Light"
         self.theme_name = name
         theme = THEMES[name]
+        dark = name == "Dark"
+        bg = "#151f24" if dark else ("#f4ecd8" if name == "Sepia" else "#f4f7f5")
+        surface = "#223039" if dark else ("#fff8e8" if name == "Sepia" else "#ffffff")
+        fg = "#e8eeeb" if dark else "#193c32"
+        border = "#3b514a" if dark else "#d9e3dd"
+        self.setStyleSheet(f"""
+            QMainWindow, QMenuBar, QStatusBar {{ background: {bg}; color: {fg}; }}
+            QWidget {{ font-family: 'Noto Sans Arabic', 'Noto Sans'; font-size: 13px; }}
+            QLabel {{ color: {fg}; background: transparent; }}
+            QToolBar {{ background: {surface}; border: 1px solid {border}; padding: 10px; spacing: 5px; }}
+            QToolButton {{ color: {fg}; padding: 9px; border-radius: 7px; }}
+            QToolButton:hover, QToolButton:checked {{ background: {border}; }}
+            QComboBox {{ background: {surface}; color: {fg}; padding: 7px; border: 1px solid {border}; border-radius: 6px; }}
+            QMenu {{ background: {surface}; color: {fg}; }}
+            QMenu::item:selected {{ background: {border}; }}
+            QPlainTextEdit, QTextBrowser {{
+                border: 0; padding: 16px;
+                background-color: {theme['editor_bg']};
+                color: {theme['editor_fg']};
+                selection-background-color: {theme['highlight']};
+                selection-color: {theme['highlighted_text']};
+            }}
+            QDockWidget {{ color: {fg}; font-weight: bold; }}
+            QDockWidget::title {{ background: {surface}; padding: 12px; }}
+            QLabel#welcomeTitle {{ font-size: 36px; font-weight: bold; }}
+            QLabel#subtitle {{ color: {('#a8bbb3' if dark else '#62796e')}; font-size: 16px; }}
+            QPushButton#welcomeCard {{ background: {surface}; color: {fg}; border: 1px solid {border}; border-radius: 14px; font-size: 17px; padding: 14px; }}
+            QPushButton#welcomeCard:hover {{ border: 2px solid #b79a55; background: {bg}; }}
+            QPushButton#welcomeCard:focus {{ border: 2px solid #b79a55; }}
+            QStatusBar {{ padding: 6px; border-top: 1px solid {border}; }}
+        """)
         for widget, bg, fg in (
             (self.viewer, theme["page_bg"], theme["text"]),
+            (self.live_view, theme["page_bg"], theme["text"]),
             (self.editor, theme["editor_bg"], theme["editor_fg"]),
         ):
             pal = widget.palette()
@@ -417,9 +539,9 @@ class MainWindow(QMainWindow):
                 QColor(theme["highlighted_text"]),
             )
             widget.setPalette(pal)
-        if self.theme_combo.currentText() != name:
+        if self.theme_combo.currentIndex() != list(THEMES).index(name):
             self.theme_combo.blockSignals(True)
-            self.theme_combo.setCurrentText(name)
+            self.theme_combo.setCurrentIndex(list(THEMES).index(name))
             self.theme_combo.blockSignals(False)
         self.render()
         QSettings("md-viewer", "md-viewer").setValue("theme", name)
@@ -498,11 +620,11 @@ class MainWindow(QMainWindow):
         menu = self.editor.createStandardContextMenu()
         menu.addSeparator()
         menu.addAction(
-            "Make selection RTL\tCtrl+Shift+R",
+            "اتجاه التحديد عربي\tCtrl+Shift+R",
             lambda: self.set_selection_direction(True),
         )
         menu.addAction(
-            "Make selection LTR\tCtrl+Shift+L",
+            "اتجاه التحديد لاتيني\tCtrl+Shift+L",
             lambda: self.set_selection_direction(False),
         )
         menu.exec(self.editor.viewport().mapToGlobal(pos))
@@ -510,14 +632,15 @@ class MainWindow(QMainWindow):
     # ---------------- misc ----------------
 
     def refresh_title(self, *_):
-        name = self.current_path.name if self.current_path else "Untitled"
+        name = self.current_path.name if self.current_path else "مستند جديد"
         star = "*" if self.editor.document().isModified() else ""
         self.setWindowTitle(f"{star}{name} — {APP_NAME}")
 
     def update_status(self):
-        mode = "Edit" if self.stack.currentWidget() is self.editor else "Preview"
+        mode = "تحرير" if self.stack.currentWidget() is self.editor else "معاينة"
+        words = len(self.editor.toPlainText().split())
         self.status_label.setText(
-            f" {mode} | {'RTL' if self.rtl else 'LTR'} "
+            f" {mode}   •   {words} كلمة   •   {'من اليمين إلى اليسار' if self.rtl else 'من اليسار إلى اليمين'} "
         )
 
     def closeEvent(self, event):
@@ -530,6 +653,8 @@ class MainWindow(QMainWindow):
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / "assets" / "qalam-icon.png")))
+    app.setDesktopFileName("md-viewer")
     win = MainWindow()
     if len(sys.argv) > 1:
         path = Path(sys.argv[1]).expanduser()
